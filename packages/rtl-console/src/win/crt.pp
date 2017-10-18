@@ -18,6 +18,7 @@ interface
 
 {$i crth.inc}
 
+Procedure CrtCodePage (CCP:integer);
 procedure Window32(X1,Y1,X2,Y2: DWord);
 procedure GotoXY32(X,Y: DWord);
 function WhereX32: DWord;
@@ -34,6 +35,7 @@ uses
 var
     SaveCursorSize: Longint;
     Win32Platform : Longint; // pulling in sysutils changes exception behaviour
+    OldConsoleOutputCP : Word;
 
 {****************************************************************************
                            Low level Routines
@@ -94,6 +96,17 @@ end;
                              Public Crt Functions
 ****************************************************************************}
 
+
+Procedure CrtCodePage (CCP:integer);
+Begin
+  If CCP = 0 then
+      SetConsoleOutputCP(GetACP)
+  ELSE
+    If CCP = -1 Then
+      SetConsoleOutputCP(OldConsoleOutputCP)
+    ELSE
+      SetConsoleOutputCP(CCP);
+End;
 
 procedure TextMode (Mode: word);
 begin
@@ -751,10 +764,10 @@ Procedure CrtWrite(var f : textrec);
 var
   i : longint;
   s : string;
-  OldConsoleOutputCP : Word;
+  //OldConsoleOutputCP : Word;
 begin
-  OldConsoleOutputCP:=GetConsoleOutputCP;
-  SetConsoleOutputCP(GetACP);
+  //OldConsoleOutputCP:=GetConsoleOutputCP;
+  //SetConsoleOutputCP(GetACP);
 
   GetScreenCursor(CurrX, CurrY);
   s:='';
@@ -781,7 +794,7 @@ begin
     WriteStr(s);
   SetScreenCursor(CurrX, CurrY);
 
-  SetConsoleOutputCP(OldConsoleOutputCP);
+  //SetConsoleOutputCP(OldConsoleOutputCP);
 
   f.bufpos:=0;
 end;
@@ -801,10 +814,10 @@ Procedure CrtRead(Var F: TextRec);
 
 var
   ch : Char;
-  OldConsoleOutputCP : Word;
+  //OldConsoleOutputCP : Word;
 Begin
-  OldConsoleOutputCP:=GetConsoleOutputCP;
-  SetConsoleOutputCP(GetACP);
+  //OldConsoleOutputCP:=GetConsoleOutputCP;
+  //SetConsoleOutputCP(GetACP);
 
   GetScreenCursor(CurrX,CurrY);
   f.bufpos:=0;
@@ -883,7 +896,7 @@ Begin
       end;
   until false;
 
-  SetConsoleOutputCP(OldConsoleOutputCP);
+  //SetConsoleOutputCP(OldConsoleOutputCP);
 	
   f.bufpos:=0;
   SetScreenCursor(CurrX, CurrY);
@@ -1023,6 +1036,9 @@ Initialization
   if PrevCtrlBreakHandler = TCtrlBreakHandler (pointer (-1)) then
    PrevCtrlBreakHandler := nil;
   CheckBreak := true;
+  OldConsoleOutputCP:=GetConsoleOutputCP;
+  CrtCodePage(0);
+
 
 finalization
   if beeperDevice <> INVALID_HANDLE_VALUE then begin
@@ -1030,4 +1046,5 @@ finalization
     CloseHandle(beeperDevice);
     DefineDosDevice(DDD_REMOVE_DEFINITION,'DosBeep','\Device\Beep');
   end;
+  CrtCodePage(-1);
 end. { unit Crt }
