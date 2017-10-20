@@ -100,12 +100,18 @@ end;
 Procedure CrtCodePage (CCP:integer);
 Begin
   If CCP = 0 then
-      SetConsoleOutputCP(GetACP)
+      Begin
+        SetConsoleOutputCP(OldConsoleOutputCP);
+        SetConsoleOutputCP(GetACP);
+      End
   ELSE
     If CCP = -1 Then
       SetConsoleOutputCP(OldConsoleOutputCP)
     ELSE
-      SetConsoleOutputCP(CCP);
+      Begin
+        SetConsoleOutputCP(OldConsoleOutputCP);
+        SetConsoleOutputCP(CCP);
+      End;
 End;
 
 procedure TextMode (Mode: word);
