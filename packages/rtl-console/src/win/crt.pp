@@ -18,6 +18,8 @@ interface
 
 {$i crth.inc}
 
+Function GetScreenHeight : DWord;
+Function GetScreenWidth : DWord;
 Procedure CrtCodePage (CCP:integer);
 procedure Window32(X1,Y1,X2,Y2: DWord);
 procedure GotoXY32(X,Y: DWord);
@@ -40,36 +42,6 @@ var
 {****************************************************************************
                            Low level Routines
 ****************************************************************************}
-
-function GetScreenHeight : DWord;
-var
-  ConsoleInfo: TConsoleScreenBufferinfo;
-begin
-  if (not GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleInfo)) then begin
-{$ifdef SYSTEMDEBUG}
-    Writeln(stderr,'GetScreenHeight failed GetLastError returns ',GetLastError);
-    Halt(1);
-{$endif SYSTEMDEBUG}
-    // ts: this is really silly assumption; imho better: issue a halt
-    GetScreenHeight:=25;
-  end else
-    GetScreenHeight := ConsoleInfo.dwSize.Y;
-end; { func. GetScreenHeight }
-
-function GetScreenWidth : DWord;
-var
-  ConsoleInfo: TConsoleScreenBufferInfo;
-begin
-  if (not GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleInfo)) then begin
-{$ifdef SYSTEMDEBUG}
-    Writeln(stderr,'GetScreenWidth failed GetLastError returns ',GetLastError);
-    Halt(1);
-{$endif SYSTEMDEBUG}
-    // ts: this is really silly assumption; imho better: issue a halt
-    GetScreenWidth:=80;
-  end else
-    GetScreenWidth := ConsoleInfo.dwSize.X;
-end; { func. GetScreenWidth }
 
 
 procedure GetScreenCursor(var x : DWord; var y : DWord);
@@ -95,6 +67,37 @@ end;
 {****************************************************************************
                              Public Crt Functions
 ****************************************************************************}
+
+
+Function GetScreenHeight : DWord;
+var
+  ConsoleInfo: TConsoleScreenBufferinfo;
+Begin
+  If (not GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleInfo)) then Begin
+{$ifdef SYSTEMDEBUG}
+    Writeln(stderr,'GetScreenHeight failed GetLastError returns ',GetLastError);
+    Halt(1);
+{$endif SYSTEMDEBUG}
+    // ts: this is really silly assumption; imho better: issue a halt
+    GetScreenHeight:=25;
+  End Else
+    GetScreenHeight := ConsoleInfo.dwSize.Y;
+End; { func. GetScreenHeight }
+
+Function GetScreenWidth : DWord;
+var
+  ConsoleInfo: TConsoleScreenBufferInfo;
+Begin
+  If (not GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleInfo)) then Begin
+{$ifdef SYSTEMDEBUG}
+    Writeln(stderr,'GetScreenWidth failed GetLastError returns ',GetLastError);
+    Halt(1);
+{$endif SYSTEMDEBUG}
+    // ts: this is really silly assumption; imho better: issue a halt
+    GetScreenWidth:=80;
+  End Else
+    GetScreenWidth := ConsoleInfo.dwSize.X;
+End; { func. GetScreenWidth }
 
 
 Procedure CrtCodePage (CCP:integer);
