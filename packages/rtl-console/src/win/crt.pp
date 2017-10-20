@@ -18,6 +18,8 @@ interface
 
 {$i crth.inc}
 
+Procedure CRT_Switch_CodePage(CSCP:Boolean);
+Procedure CRT_TP_Compatible(CTC:Boolean);
 procedure Window32(X1,Y1,X2,Y2: DWord);
 procedure GotoXY32(X,Y: DWord);
 function WhereX32: DWord;
@@ -34,7 +36,13 @@ uses
 var
     SaveCursorSize: Longint;
     Win32Platform : Longint; // pulling in sysutils changes exception behaviour
-
+    
+   TP_Compatible      : Boolean; // If True will not change the codepage to GetACP for compatibility
+                                      // with Turbo Pascal CRT Unit
+    
+   Switch_CodePage : Boolean; // If True  Codepage will be switched every read and write. 
+                                      // If False Codepage will only be set on Initialization and Finalization
+   OriginalConsoleOutputCP : Word;
 {****************************************************************************
                            Low level Routines
 ****************************************************************************}
@@ -93,7 +101,28 @@ end;
 {****************************************************************************
                              Public Crt Functions
 ****************************************************************************}
+Procedure CRT_Switch_CodePage(CSCP:Boolean);
+Begin
+    Switch_CodePage:=CSCP;
+    If Switch_CodePage then
+      SetConsoleOutputCP(OriginalConsoleOutputCP)   // Set Console back to Original since it will now be switched
+                                                    // every read and write
+    Else
+      If Not(TP_Compatible) then
+        SetConsoleOutputCP(GetACP);   // Set Console only once here if CRT_Switch_CodePage is False and
+                                      // if CRT_TP_Compatible is also False
+End;
 
+Procedure CRT_TP_Compatible(CTC:Boolean);
+Begin
+    TP_Compatible:=CTC;
+    If TP_Compatible Then
+      SetConsoleOutputCP(OriginalConsoleOutputCP)    // Set Console back to Original if CRT_TP_Compatible is True
+    Else
+      if Not(Switch_CodePage) Then
+        SetConsoleOutputCP(GetACP);   // Set Console only once here if CRT_Switch_CodePage is False and
+                                      // if CRT_TP_Compatible is False
+End;
 
 procedure TextMode (Mode: word);
 begin
@@ -753,8 +782,11 @@ var
   s : string;
   OldConsoleOutputCP : Word;
 begin
-  OldConsoleOutputCP:=GetConsoleOutputCP;
-  SetConsoleOutputCP(GetACP);
+  If Switch_CodePage and Not(TP_Compatible) then    //Switch Codepage every Read.
+    Begin
+      OldConsoleOutputCP:=GetConsoleOutputCP;
+      SetConsoleOutputCP(GetACP);
+    End;
 
   GetScreenCursor(CurrX, CurrY);
   s:='';
@@ -764,7 +796,7 @@ begin
         if s<>'' then
           begin
             WriteStr(s);
- 	    s:='';
+            s:='';
           end;
         WriteChar(f.buffer[i]);
       end
@@ -781,7 +813,11 @@ begin
     WriteStr(s);
   SetScreenCursor(CurrX, CurrY);
 
-  SetConsoleOutputCP(OldConsoleOutputCP);
+  If Switch_CodePage then        //Restore CodePage Every Write
+    If TP_Compatible Then
+      SetConsoleOutputCP(OriginalConsoleOutputCP) 
+    Else
+      SetConsoleOutputCP(OldConsoleOutputCP);
 
   f.bufpos:=0;
 end;
@@ -803,8 +839,11 @@ var
   ch : Char;
   OldConsoleOutputCP : Word;
 Begin
-  OldConsoleOutputCP:=GetConsoleOutputCP;
-  SetConsoleOutputCP(GetACP);
+  If Switch_CodePage and Not(TP_Compatible) then    //Switch Codepage every Read.
+    Begin
+      OldConsoleOutputCP:=GetConsoleOutputCP;
+      SetConsoleOutputCP(GetACP);
+    End;
 
   GetScreenCursor(CurrX,CurrY);
   f.bufpos:=0;
@@ -883,8 +922,12 @@ Begin
       end;
   until false;
 
-  SetConsoleOutputCP(OldConsoleOutputCP);
-	
+  If Switch_CodePage then        //Restore CodePage Every Read
+    If TP_Compatible Then
+      SetConsoleOutputCP(OriginalConsoleOutputCP) 
+    Else
+      SetConsoleOutputCP(OldConsoleOutputCP);
+
   f.bufpos:=0;
   SetScreenCursor(CurrX, CurrY);
 End;
@@ -985,6 +1028,13 @@ Initialization
 
   SetActiveWindow(0);
 
+  OriginalConsoleOutputCP:=GetConsoleOutputCP;  //Aways save the original console codepage so it can be resored on exit.
+  Switch_CodePage:=True;  // Default to use GetACP CodePage to remain compatible with previous CRT version.
+  TP_Compatible:=False;   // Default to switch codepage every read and write to remain compatible with previous CRT version.
+                          
+  //CRT_Switch_CodePage(False); // With These defaults the code page does not need to be changed here.  If Switch_CodePage and
+                                // TP_Compatible both defaulted to False then CRT_Switch_CodePage(False) needs to be run here.
+
   {--------------------- Get the cursor size and such -----------------------}
   FillChar(CursorInfo, SizeOf(CursorInfo), 00);
   GetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), CursorInfo);
@@ -1030,4 +1080,6 @@ finalization
     CloseHandle(beeperDevice);
     DefineDosDevice(DDD_REMOVE_DEFINITION,'DosBeep','\Device\Beep');
   end;
+  SetConsoleOutputCP(OriginalConsoleOutputCP);  //Always put the colsole back the way it was on exit.
+                                                //useful if the program is executed from command line.
 end. { unit Crt }
