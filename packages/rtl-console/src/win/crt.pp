@@ -289,7 +289,7 @@ var
    DoingNumChars: Boolean;
    DoingNumCode: Byte;
 
-Function RemapScanCode (ScanCode: byte; CtrlKeyState: byte; keycode:longint): byte;
+Function RemapScanCode (ScanCode: byte; CtrlKeyState: word; keycode:longint): byte;
   { Several remappings of scancodes are necessary to comply with what
     we get with MSDOS. Special Windows keys, as Alt-Tab, Ctrl-Esc etc.
     are excluded }
