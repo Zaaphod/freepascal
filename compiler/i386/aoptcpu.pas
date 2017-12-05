@@ -525,51 +525,6 @@ var
     GetFinalDestination := true;
   end;
 
-  function DoSubAddOpt(var p: tai): Boolean;
-  begin
-    DoSubAddOpt := False;
-    if GetLastInstruction(p, hp1) and
-       (hp1.typ = ait_instruction) and
-       (taicpu(hp1).opsize = taicpu(p).opsize) then
-      case taicpu(hp1).opcode Of
-        A_DEC:
-          if (taicpu(hp1).oper[0]^.typ = top_reg) and
-             (taicpu(hp1).oper[0]^.reg = taicpu(p).oper[1]^.reg) then
-            begin
-              taicpu(p).loadConst(0,taicpu(p).oper[0]^.val+1);
-              asml.remove(hp1);
-              hp1.free;
-            end;
-         A_SUB:
-           if (taicpu(hp1).oper[0]^.typ = top_const) and
-              (taicpu(hp1).oper[1]^.typ = top_reg) and
-              (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[1]^.reg) then
-             begin
-               taicpu(p).loadConst(0,taicpu(p).oper[0]^.val+taicpu(hp1).oper[0]^.val);
-               asml.remove(hp1);
-               hp1.free;
-             end;
-         A_ADD:
-           if (taicpu(hp1).oper[0]^.typ = top_const) and
-              (taicpu(hp1).oper[1]^.typ = top_reg) and
-              (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[1]^.reg) then
-             begin
-               taicpu(p).loadConst(0,taicpu(p).oper[0]^.val-taicpu(hp1).oper[0]^.val);
-               asml.remove(hp1);
-               hp1.free;
-               if (taicpu(p).oper[0]^.val = 0) then
-                 begin
-                   hp1 := tai(p.next);
-                   asml.remove(p);
-                   p.free;
-                   if not GetLastInstruction(hp1, p) then
-                     p := hp1;
-                   DoSubAddOpt := True;
-                 end
-             end;
-       end;
-  end;
-
 begin
   p := BlockStart;
   ClearUsedRegs;
@@ -1116,50 +1071,8 @@ begin
                         end
                     end;
                   A_SUB:
-                    { * change "subl $2, %esp; pushw x" to "pushl x"}
-                    { * change "sub/add const1, reg" or "dec reg" followed by
-                        "sub const2, reg" to one "sub ..., reg" }
-                    begin
-                      if (taicpu(p).oper[0]^.typ = top_const) and
-                         (taicpu(p).oper[1]^.typ = top_reg) then
-                        if (taicpu(p).oper[0]^.val = 2) and
-                           (taicpu(p).oper[1]^.reg = NR_ESP) and
-                           { Don't do the sub/push optimization if the sub }
-                           { comes from setting up the stack frame (JM)    }
-                           (not getLastInstruction(p,hp1) or
-                           (hp1.typ <> ait_instruction) or
-                           (taicpu(hp1).opcode <> A_MOV) or
-                           (taicpu(hp1).oper[0]^.typ <> top_reg) or
-                           (taicpu(hp1).oper[0]^.reg <> NR_ESP) or
-                           (taicpu(hp1).oper[1]^.typ <> top_reg) or
-                           (taicpu(hp1).oper[1]^.reg <> NR_EBP)) then
-                          begin
-                            hp1 := tai(p.next);
-                            while Assigned(hp1) and
-                                  (tai(hp1).typ in [ait_instruction]+SkipInstr) and
-                                  not RegReadByInstruction(NR_ESP,hp1) and
-                                  not RegModifiedByInstruction(NR_ESP,hp1) do
-                              hp1 := tai(hp1.next);
-                            if Assigned(hp1) and
-                               (tai(hp1).typ = ait_instruction) and
-                               (taicpu(hp1).opcode = A_PUSH) and
-                               (taicpu(hp1).opsize = S_W) then
-                              begin
-                                taicpu(hp1).changeopsize(S_L);
-                                if taicpu(hp1).oper[0]^.typ=top_reg then
-                                  setsubreg(taicpu(hp1).oper[0]^.reg,R_SUBWHOLE);
-                                hp1 := tai(p.next);
-                                asml.remove(p);
-                                p.free;
-                                p := hp1;
-                                continue
-                              end;
-                            if DoSubAddOpt(p) then
-                              continue;
-                          end
-                        else if DoSubAddOpt(p) then
-                          continue
-                    end;
+                    if OptPass1Sub(p) then
+                      continue;
                   A_VMOVAPS,
                   A_VMOVAPD:
                     if OptPass1VMOVAP(p) then
@@ -1250,7 +1163,6 @@ end;
 procedure TCPUAsmOptimizer.PostPeepHoleOpts;
 var
   p,hp1,hp2: tai;
-  IsTestConstX: boolean;
 begin
   p := BlockStart;
   ClearUsedRegs;
@@ -1309,19 +1221,11 @@ begin
                     end;
                 end;
               A_CMP:
-                begin
-                  if (taicpu(p).oper[0]^.typ = top_const) and
-                     (taicpu(p).oper[0]^.val = 0) and
-                     (taicpu(p).oper[1]^.typ = top_reg) then
-                   {change "cmp $0, %reg" to "test %reg, %reg"}
-                    begin
-                      taicpu(p).opcode := A_TEST;
-                      taicpu(p).loadreg(0,taicpu(p).oper[1]^.reg);
-                      continue;
-                    end;
-                end;
+                if PostPeepholeOptCmp(p) then
+                  Continue;
               A_MOV:
-                PostPeepholeOptMov(p);
+                if PostPeepholeOptMov(p) then
+                  Continue;
               A_MOVZX:
                 { if register vars are on, it's possible there is code like }
                 {   "cmpl $3,%eax; movzbl 8(%ebp),%ebx; je .Lxxx"           }
@@ -1370,93 +1274,8 @@ begin
                         end;
                  end;
               A_TEST, A_OR:
-                {removes the line marked with (x) from the sequence
-                 and/or/xor/add/sub/... $x, %y
-                 test/or %y, %y  | test $-1, %y    (x)
-                 j(n)z _Label
-                    as the first instruction already adjusts the ZF
-                    %y operand may also be a reference }
-                 begin
-                   IsTestConstX:=(taicpu(p).opcode=A_TEST) and
-                     MatchOperand(taicpu(p).oper[0]^,-1);
-                   if (OpsEqual(taicpu(p).oper[0]^,taicpu(p).oper[1]^) or IsTestConstX) and
-                      GetLastInstruction(p, hp1) and
-                      (tai(hp1).typ = ait_instruction) and
-                      GetNextInstruction(p,hp2) and
-                      MatchInstruction(hp2,A_SETcc,A_Jcc,A_CMOVcc,[]) then
-                     case taicpu(hp1).opcode Of
-                       A_ADD, A_SUB, A_OR, A_XOR, A_AND:
-                         begin
-                           if OpsEqual(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) and
-                             { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
-                             { and in case of carry for A(E)/B(E)/C/NC                  }
-                              ((taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) or
-                               ((taicpu(hp1).opcode <> A_ADD) and
-                                (taicpu(hp1).opcode <> A_SUB))) then
-                             begin
-                               hp1 := tai(p.next);
-                               asml.remove(p);
-                               p.free;
-                               p := tai(hp1);
-                               continue
-                             end;
-                         end;
-                       A_SHL, A_SAL, A_SHR, A_SAR:
-                         begin
-                           if OpsEqual(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) and
-                             { SHL/SAL/SHR/SAR with a value of 0 do not change the flags }
-                             { therefore, it's only safe to do this optimization for     }
-                             { shifts by a (nonzero) constant                            }
-                              (taicpu(hp1).oper[0]^.typ = top_const) and
-                              (taicpu(hp1).oper[0]^.val <> 0) and
-                             { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
-                             { and in case of carry for A(E)/B(E)/C/NC                  }
-                              (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) then
-                             begin
-                               hp1 := tai(p.next);
-                               asml.remove(p);
-                               p.free;
-                               p := tai(hp1);
-                               continue
-                             end;
-                         end;
-                       A_DEC, A_INC, A_NEG:
-                         begin
-                           if OpsEqual(taicpu(hp1).oper[0]^,taicpu(p).oper[1]^) and
-                             { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
-                             { and in case of carry for A(E)/B(E)/C/NC                  }
-                             (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) then
-                             begin
-                               case taicpu(hp1).opcode Of
-                                 A_DEC, A_INC:
- {replace inc/dec with add/sub 1, because inc/dec doesn't set the carry flag}
-                                   begin
-                                     case taicpu(hp1).opcode Of
-                                       A_DEC: taicpu(hp1).opcode := A_SUB;
-                                       A_INC: taicpu(hp1).opcode := A_ADD;
-                                     end;
-                                     taicpu(hp1).loadoper(1,taicpu(hp1).oper[0]^);
-                                     taicpu(hp1).loadConst(0,1);
-                                     taicpu(hp1).ops:=2;
-                                   end
-                                 end;
-                               hp1 := tai(p.next);
-                               asml.remove(p);
-                               p.free;
-                               p := tai(hp1);
-                               continue
-                             end;
-                         end
-                     else
-                       { change "test  $-1,%reg" into "test %reg,%reg" }
-                       if IsTestConstX and (taicpu(p).oper[1]^.typ=top_reg) then
-                         taicpu(p).loadoper(0,taicpu(p).oper[1]^);
-                     end { case }
-                   else
-                     { change "test  $-1,%reg" into "test %reg,%reg" }
-                     if IsTestConstX and (taicpu(p).oper[1]^.typ=top_reg) then
-                       taicpu(p).loadoper(0,taicpu(p).oper[1]^);
-                 end;
+                if PostPeepholeOptTestOr(p) then
+                  Continue;
             end;
           end;
       end;

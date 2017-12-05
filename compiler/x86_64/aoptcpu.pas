@@ -106,6 +106,8 @@ uses
                 result:=OptPass1MOVXX(p);
               A_LEA:
                 result:=OptPass1LEA(p);
+              A_SUB:
+                result:=OptPass1Sub(p);
             end;
           end;
         end;
@@ -141,7 +143,12 @@ uses
             begin
               case taicpu(p).opcode of
                 A_MOV:
-                  PostPeepholeOptMov(p);
+                  Result:=PostPeepholeOptMov(p);
+                A_CMP:
+                  Result:=PostPeepholeOptCmp(p);
+                A_OR,
+                A_TEST:
+                  Result:=PostPeepholeOptTestOr(p);
               end;
             end;
         end;

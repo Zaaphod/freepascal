@@ -43,7 +43,7 @@ interface
         procedure WriteReference(var ref : treference);
         procedure WriteOper(const o:toper;s : topsize; opcode: tasmop;ops:longint;dest : boolean);
         procedure WriteOper_jmp(const o:toper; ai : taicpu);
-        procedure WriteSection(atype:TAsmSectiontype;const aname:string;alignment : byte);
+        procedure WriteSection(atype:TAsmSectiontype;const aname:string;alignment : longint);
         procedure ResetSectionsList;
         procedure WriteGroups;
       protected
@@ -462,7 +462,7 @@ interface
       );
 
     procedure TX86NasmAssembler.WriteSection(atype : TAsmSectiontype;
-      const aname : string; alignment : byte);
+      const aname : string; alignment : longint);
       const
         secnames : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
           '.text',
@@ -630,7 +630,7 @@ interface
       quoted   : boolean;
       fixed_opcode: TAsmOp;
       prefix, LastSecName  : string;
-      LastAlign : Byte;
+      LastAlign : LongInt;
       cpu: tcputype;
       prevfileinfo : tfileposinfo;
       previnfile : tinputfile;
@@ -1053,7 +1053,41 @@ interface
                       (is_segment_reg(taicpu(hp).oper[0]^.reg)) then
                     writer.AsmWriteln(#9#9'DB'#9'066h');
 {$endif not i8086}
-                  writer.AsmWrite(#9#9+prefix+std_op2str[fixed_opcode]+cond2str[taicpu(hp).condition]);
+                  if (fixed_opcode=A_RETW) or (fixed_opcode=A_RETNW) or (fixed_opcode=A_RETFW) or
+{$ifdef x86_64}
+                     (fixed_opcode=A_RETQ) or (fixed_opcode=A_RETNQ) or (fixed_opcode=A_RETFQ) or
+{$else x86_64}
+                     (fixed_opcode=A_RETD) or (fixed_opcode=A_RETND) or
+{$endif x86_64}
+                     (fixed_opcode=A_RETFD) then
+                   begin
+                     case fixed_opcode of
+                       A_RETW:
+                         writer.AsmWrite(#9#9'o16 ret');
+                       A_RETNW:
+                         writer.AsmWrite(#9#9'o16 retn');
+                       A_RETFW:
+                         writer.AsmWrite(#9#9'o16 retf');
+{$ifdef x86_64}
+                       A_RETQ,
+                       A_RETNQ:
+                         writer.AsmWrite(#9#9'ret');
+                       A_RETFQ:
+                         writer.AsmWrite(#9#9'o64 retf');
+{$else x86_64}
+                       A_RETD:
+                         writer.AsmWrite(#9#9'o32 ret');
+                       A_RETND:
+                         writer.AsmWrite(#9#9'o32 retn');
+{$endif x86_64}
+                       A_RETFD:
+                         writer.AsmWrite(#9#9'o32 retf');
+                       else
+                         internalerror(2017111001);
+                     end;
+                   end
+                  else
+                    writer.AsmWrite(#9#9+prefix+std_op2str[fixed_opcode]+cond2str[taicpu(hp).condition]);
                   if taicpu(hp).ops<>0 then
                    begin
                      if is_calljmp(fixed_opcode) then
@@ -1195,7 +1229,7 @@ interface
         for i:=0 to current_asmdata.AsmSymbolDict.Count-1 do
           begin
             sym:=TAsmSymbol(current_asmdata.AsmSymbolDict[i]);
-            if sym.bind=AB_EXTERNAL then
+            if sym.bind in [AB_EXTERNAL,AB_EXTERNAL_INDIRECT] then
               writer.AsmWriteln('EXTERN'#9+sym.name);
           end;
       end;

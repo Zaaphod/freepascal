@@ -33,6 +33,8 @@ interface
        { ti8086inlinenode }
 
        ti8086inlinenode = class(tx86inlinenode)
+         function pass_typecheck_cpu: tnode; override;
+         function typecheck_faraddr: tnode;
          function typecheck_seg: tnode; override;
          function first_seg: tnode; override;
          procedure second_seg; override;
@@ -56,10 +58,49 @@ implementation
     symtype,symdef,symcpu,
     cgbase,pass_1,pass_2,
     cpuinfo,cpubase,paramgr,
-    nbas,nadd,ncon,ncal,ncnv,nld,ncgutil,
+    nbas,nadd,ncon,ncal,ncnv,nld,nmem,nmat,ncgutil,
     tgobj,
     cga,cgutils,cgx86,cgobj,hlcgobj,
     htypechk,procinfo;
+
+     function ti8086inlinenode.pass_typecheck_cpu: tnode;
+       begin
+         case inlinenumber of
+           in_faraddr_x:
+             result:=typecheck_faraddr;
+           else
+             inherited;
+         end;
+       end;
+
+     function ti8086inlinenode.typecheck_faraddr: tnode;
+       var
+         addr_node: tnode;
+         addr_node_resultdef: tdef;
+         seg_node: tnode;
+       begin
+         addr_node:=caddrnode.create(left);
+         typecheckpass(addr_node);
+         addr_node_resultdef:=addr_node.resultdef;
+         if is_farpointer(addr_node.resultdef) or is_farprocvar(addr_node.resultdef) then
+           begin
+             left:=nil;
+             result:=addr_node;
+           end
+         else
+           begin
+             seg_node:=geninlinenode(in_seg_x,false,left.getcopy);
+             inserttypeconv_internal(seg_node,u32inttype);
+             seg_node:=cshlshrnode.create(shln,seg_node,cordconstnode.create(16,u8inttype,false));
+             inserttypeconv_internal(addr_node,u32inttype);
+             left:=nil;
+             result:=caddnode.create(addn,seg_node,addr_node);
+             if addr_node_resultdef.typ=pointerdef then
+               inserttypeconv_internal(result,tcpupointerdef.getreusablex86(tpointerdef(addr_node_resultdef).pointeddef,x86pt_far))
+             else
+               inserttypeconv_internal(result,voidfarpointertype);
+           end;
+       end;
 
      function ti8086inlinenode.typecheck_seg: tnode;
        begin
@@ -111,17 +152,11 @@ implementation
              segref.refaddr:=addr_seg;
              cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_16,OS_16,segref,location.register);
            end
-         else if left.location.reference.base=NR_BP then
-           begin
-             location_reset(location,LOC_REGISTER,OS_16);
-             location.register:=cg.getintregister(current_asmdata.CurrAsmList,OS_16);
-             current_asmdata.CurrAsmList.concat(Taicpu.op_reg_reg(A_MOV,S_W,NR_SS,location.register));
-           end
          else
            begin
              location_reset(location,LOC_REGISTER,OS_16);
              location.register:=cg.getintregister(current_asmdata.CurrAsmList,OS_16);
-             current_asmdata.CurrAsmList.Concat(Taicpu.op_reg_reg(A_MOV,S_W,NR_DS,location.register));
+             current_asmdata.CurrAsmList.concat(Taicpu.op_reg_reg(A_MOV,S_W,get_default_segment_of_ref(left.location.reference),location.register));
            end;
        end;
 

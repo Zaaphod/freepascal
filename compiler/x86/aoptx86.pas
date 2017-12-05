@@ -55,6 +55,8 @@ unit aoptx86;
         class function isFoldableArithOp(hp1 : taicpu; reg : tregister) : boolean;
         procedure RemoveLastDeallocForFuncRes(p : tai);
 
+        function DoSubAddOpt(var p : tai) : Boolean;
+
         function PrePeepholeOptSxx(var p : tai) : boolean;
 
         function OptPass1AND(var p : tai) : boolean;
@@ -66,13 +68,16 @@ unit aoptx86;
         function OptPass1MOVXX(var p : tai) : boolean;
         function OptPass1OP(const p : tai) : boolean;
         function OptPass1LEA(var p : tai) : boolean;
+        function OptPass1Sub(var p : tai) : boolean;
 
         function OptPass2MOV(var p : tai) : boolean;
         function OptPass2Imul(var p : tai) : boolean;
         function OptPass2Jmp(var p : tai) : boolean;
         function OptPass2Jcc(var p : tai) : boolean;
 
-        procedure PostPeepholeOptMov(const p : tai);
+        function PostPeepholeOptMov(const p : tai) : Boolean;
+        function PostPeepholeOptCmp(var p : tai) : Boolean;
+        function PostPeepholeOptTestOr(var p : tai) : Boolean;
 
         procedure OptReferences;
       end;
@@ -1873,6 +1878,99 @@ unit aoptx86;
       end;
 
 
+    function TX86AsmOptimizer.DoSubAddOpt(var p: tai): Boolean;
+      var
+        hp1 : tai;
+      begin
+        DoSubAddOpt := False;
+        if GetLastInstruction(p, hp1) and
+           (hp1.typ = ait_instruction) and
+           (taicpu(hp1).opsize = taicpu(p).opsize) then
+          case taicpu(hp1).opcode Of
+            A_DEC:
+              if (taicpu(hp1).oper[0]^.typ = top_reg) and
+                MatchOperand(taicpu(hp1).oper[0]^,taicpu(p).oper[1]^) then
+                begin
+                  taicpu(p).loadConst(0,taicpu(p).oper[0]^.val+1);
+                  asml.remove(hp1);
+                  hp1.free;
+                end;
+             A_SUB:
+               if MatchOpType(taicpu(hp1),top_const,top_reg) and
+                 MatchOperand(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) then
+                 begin
+                   taicpu(p).loadConst(0,taicpu(p).oper[0]^.val+taicpu(hp1).oper[0]^.val);
+                   asml.remove(hp1);
+                   hp1.free;
+                 end;
+             A_ADD:
+               if MatchOpType(taicpu(hp1),top_const,top_reg) and
+                 MatchOperand(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) then
+                 begin
+                   taicpu(p).loadConst(0,taicpu(p).oper[0]^.val-taicpu(hp1).oper[0]^.val);
+                   asml.remove(hp1);
+                   hp1.free;
+                   if (taicpu(p).oper[0]^.val = 0) then
+                     begin
+                       hp1 := tai(p.next);
+                       asml.remove(p);
+                       p.free;
+                       if not GetLastInstruction(hp1, p) then
+                         p := hp1;
+                       DoSubAddOpt := True;
+                     end
+                 end;
+           end;
+      end;
+
+
+    function TX86AsmOptimizer.OptPass1Sub(var p : tai) : boolean;
+      var
+        hp1 : tai;
+      begin
+        Result:=false;
+        { * change "subl $2, %esp; pushw x" to "pushl x"}
+        { * change "sub/add const1, reg" or "dec reg" followed by
+            "sub const2, reg" to one "sub ..., reg" }
+        if MatchOpType(taicpu(p),top_const,top_reg) then
+          begin
+{$ifdef i386}
+            if (taicpu(p).oper[0]^.val = 2) and
+               (taicpu(p).oper[1]^.reg = NR_ESP) and
+               { Don't do the sub/push optimization if the sub }
+               { comes from setting up the stack frame (JM)    }
+               (not(GetLastInstruction(p,hp1)) or
+               not(MatchInstruction(hp1,A_MOV,[S_L]) and
+                 MatchOperand(taicpu(hp1).oper[0]^,NR_ESP) and
+                 MatchOperand(taicpu(hp1).oper[0]^,NR_EBP))) then
+              begin
+                hp1 := tai(p.next);
+                while Assigned(hp1) and
+                      (tai(hp1).typ in [ait_instruction]+SkipInstr) and
+                      not RegReadByInstruction(NR_ESP,hp1) and
+                      not RegModifiedByInstruction(NR_ESP,hp1) do
+                  hp1 := tai(hp1.next);
+                if Assigned(hp1) and
+                  MatchInstruction(hp1,A_PUSH,[S_W]) then
+                  begin
+                    taicpu(hp1).changeopsize(S_L);
+                    if taicpu(hp1).oper[0]^.typ=top_reg then
+                      setsubreg(taicpu(hp1).oper[0]^.reg,R_SUBWHOLE);
+                    hp1 := tai(p.next);
+                    asml.remove(p);
+                    p.free;
+                    p := hp1;
+                    Result:=true;
+                    exit;
+                  end;
+              end;
+{$endif i386}
+            if DoSubAddOpt(p) then
+              Result:=true;
+          end;
+      end;
+
+
     function TX86AsmOptimizer.OptPass2MOV(var p : tai) : boolean;
       var
        TmpUsedRegs : TAllUsedRegs;
@@ -2633,39 +2731,146 @@ unit aoptx86;
        end;
 
 
-    procedure TX86AsmOptimizer.PostPeepholeOptMov(const p : tai);
-    begin
-      if (taicpu(p).oper[1]^.typ = Top_Reg) and
-        not(RegInUsedRegs(NR_DEFAULTFLAGS,UsedRegs)) then
+    function TX86AsmOptimizer.PostPeepholeOptMov(const p : tai) : Boolean;
       begin
-        if (taicpu(p).oper[0]^.typ = top_const) then
+        Result:=false;
+        if (taicpu(p).oper[1]^.typ = Top_Reg) and
+          not(RegInUsedRegs(NR_DEFAULTFLAGS,UsedRegs)) then
         begin
+          if (taicpu(p).oper[0]^.typ = top_const) then
+          begin
 
-          case taicpu(p).oper[0]^.val of
-          0:
-            begin
-              { change "mov $0,%reg" into "xor %reg,%reg" }
-              taicpu(p).opcode := A_XOR;
-              taicpu(p).loadReg(0,taicpu(p).oper[1]^.reg);
-            end;
-          $1..$FFFFFFFF:
-            begin
-              { Code size reduction by J. Gareth "Kit" Moreton }
-              { change 64-bit register to 32-bit register to reduce code size (upper 32 bits will be set to zero) }
-              case taicpu(p).opsize of
-              S_Q:
-                begin
-                  DebugMsg('Peephole Optimization: movq x,%reg -> movd x,%reg (x is a 32-bit constant)', p);
-                  TRegisterRec(taicpu(p).oper[1]^.reg).subreg := R_SUBD;
-                  taicpu(p).opsize := S_L;
+            case taicpu(p).oper[0]^.val of
+            0:
+              begin
+                { change "mov $0,%reg" into "xor %reg,%reg" }
+                taicpu(p).opcode := A_XOR;
+                taicpu(p).loadReg(0,taicpu(p).oper[1]^.reg);
+              end;
+            $1..$FFFFFFFF:
+              begin
+                { Code size reduction by J. Gareth "Kit" Moreton }
+                { change 64-bit register to 32-bit register to reduce code size (upper 32 bits will be set to zero) }
+                case taicpu(p).opsize of
+                S_Q:
+                  begin
+                    DebugMsg('Peephole Optimization: movq x,%reg -> movd x,%reg (x is a 32-bit constant)', p);
+                    TRegisterRec(taicpu(p).oper[1]^.reg).subreg := R_SUBD;
+                    taicpu(p).opsize := S_L;
+                  end;
                 end;
               end;
             end;
           end;
-
         end;
       end;
-    end;
+
+
+    function TX86AsmOptimizer.PostPeepholeOptCmp(var p : tai) : Boolean;
+      begin
+        Result:=false;
+        { change "cmp $0, %reg" to "test %reg, %reg" }
+        if MatchOpType(taicpu(p),top_const,top_reg) and
+           (taicpu(p).oper[0]^.val = 0) then
+          begin
+            taicpu(p).opcode := A_TEST;
+            taicpu(p).loadreg(0,taicpu(p).oper[1]^.reg);
+            Result:=true;
+          end;
+      end;
+
+
+    function TX86AsmOptimizer.PostPeepholeOptTestOr(var p : tai) : Boolean;
+      var
+        IsTestConstX : Boolean;
+        hp1,hp2 : tai;
+      begin
+        Result:=false;
+        { removes the line marked with (x) from the sequence
+          and/or/xor/add/sub/... $x, %y
+          test/or %y, %y  | test $-1, %y    (x)
+          j(n)z _Label
+             as the first instruction already adjusts the ZF
+             %y operand may also be a reference }
+        IsTestConstX:=(taicpu(p).opcode=A_TEST) and
+          MatchOperand(taicpu(p).oper[0]^,-1);
+        if (OpsEqual(taicpu(p).oper[0]^,taicpu(p).oper[1]^) or IsTestConstX) and
+           GetLastInstruction(p, hp1) and
+           (tai(hp1).typ = ait_instruction) and
+           GetNextInstruction(p,hp2) and
+           MatchInstruction(hp2,A_SETcc,A_Jcc,A_CMOVcc,[]) then
+          case taicpu(hp1).opcode Of
+            A_ADD, A_SUB, A_OR, A_XOR, A_AND:
+              begin
+                if OpsEqual(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) and
+                  { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
+                  { and in case of carry for A(E)/B(E)/C/NC                  }
+                   ((taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) or
+                    ((taicpu(hp1).opcode <> A_ADD) and
+                     (taicpu(hp1).opcode <> A_SUB))) then
+                  begin
+                    hp1 := tai(p.next);
+                    asml.remove(p);
+                    p.free;
+                    p := tai(hp1);
+                    Result:=true;
+                  end;
+              end;
+            A_SHL, A_SAL, A_SHR, A_SAR:
+              begin
+                if OpsEqual(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) and
+                  { SHL/SAL/SHR/SAR with a value of 0 do not change the flags }
+                  { therefore, it's only safe to do this optimization for     }
+                  { shifts by a (nonzero) constant                            }
+                   (taicpu(hp1).oper[0]^.typ = top_const) and
+                   (taicpu(hp1).oper[0]^.val <> 0) and
+                  { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
+                  { and in case of carry for A(E)/B(E)/C/NC                  }
+                   (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) then
+                  begin
+                    hp1 := tai(p.next);
+                    asml.remove(p);
+                    p.free;
+                    p := tai(hp1);
+                    Result:=true;
+                  end;
+              end;
+            A_DEC, A_INC, A_NEG:
+              begin
+                if OpsEqual(taicpu(hp1).oper[0]^,taicpu(p).oper[1]^) and
+                  { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
+                  { and in case of carry for A(E)/B(E)/C/NC                  }
+                  (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) then
+                  begin
+                    case taicpu(hp1).opcode Of
+                      A_DEC, A_INC:
+                        { replace inc/dec with add/sub 1, because inc/dec doesn't set the carry flag }
+                        begin
+                          case taicpu(hp1).opcode Of
+                            A_DEC: taicpu(hp1).opcode := A_SUB;
+                            A_INC: taicpu(hp1).opcode := A_ADD;
+                          end;
+                          taicpu(hp1).loadoper(1,taicpu(hp1).oper[0]^);
+                          taicpu(hp1).loadConst(0,1);
+                          taicpu(hp1).ops:=2;
+                        end
+                      end;
+                    hp1 := tai(p.next);
+                    asml.remove(p);
+                    p.free;
+                    p := tai(hp1);
+                    Result:=true;
+                  end;
+              end
+          else
+            { change "test  $-1,%reg" into "test %reg,%reg" }
+            if IsTestConstX and (taicpu(p).oper[1]^.typ=top_reg) then
+              taicpu(p).loadoper(0,taicpu(p).oper[1]^);
+          end { case }
+        { change "test  $-1,%reg" into "test %reg,%reg" }
+        else if IsTestConstX and (taicpu(p).oper[1]^.typ=top_reg) then
+          taicpu(p).loadoper(0,taicpu(p).oper[1]^);
+      end;
 
 
     procedure TX86AsmOptimizer.OptReferences;

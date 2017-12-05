@@ -806,8 +806,8 @@ var
 begin
   {$IFDEF VerbosePasParser}
   writeln('TPasParser.ParseExc Token="',CurTokenText,'"');
+  //writeln('TPasParser.ParseExc ',Scanner.CurColumn,' ',Scanner.CurSourcePos.Column,' ',Scanner.CurTokenPos.Column);
   {$ENDIF}
-  writeln('TPasParser.ParseExc ',Scanner.CurColumn,' ',Scanner.CurSourcePos.Column,' ',Scanner.CurTokenPos.Column);
   SetLastMsg(mtError,MsgNumber,Fmt,Args);
   p:=Scanner.CurTokenPos;
   raise EParserError.Create(SafeFormat(SParserErrorAtToken,
@@ -1357,6 +1357,8 @@ begin
         ST.DestType:=Ref;
         Result:=ST;
         ST:=Nil;
+        if TypeName<>'' then
+          Engine.FinishScope(stTypeDef,Result);
         end;
       stkRange:
         begin
@@ -1372,6 +1374,8 @@ begin
           Result := TPasAliasType(CreateElement(TPasAliasType, TypeName, Parent, NamePos));
           TPasAliasType(Result).DestType:=Ref;
           TPasAliasType(Result).Expr:=Expr;
+          if TypeName<>'' then
+            Engine.FinishScope(stTypeDef,Result);
           end
         else
           Result:=Ref;
@@ -1397,6 +1401,7 @@ begin
   ok:=false;
   try
     Result.DestType := ParseType(Result,NamePos,'');
+    Engine.FinishScope(stTypeDef,Result);
     ok:=true;
   finally
     if not ok then
@@ -3251,7 +3256,7 @@ begin
             ParseLabels(Declarations);
         end;
       tkSquaredBraceOpen:
-        if msIgnoreAttributes in CurrentModeSwitches then
+        if [msPrefixedAttributes,msIgnoreAttributes]*CurrentModeSwitches<>[] then
           ParseAttribute(Declarations)
         else
           ParseExcSyntaxError;
@@ -3471,6 +3476,7 @@ begin
   repeat
     // skip attribute
     // [name,name(param,param,...),...]
+    // [name(param,name=param)]
     repeat
       ExpectIdentifier;
       NextToken;
@@ -3679,6 +3685,7 @@ function TPasParser.ParseSpecializeType(Parent: TPasElement;
 begin
   NextToken;
   Result:=ParseSimpleType(Parent,CurSourcePos,TypeName) as TPasSpecializeType;
+  Engine.FinishScope(stTypeDef,Result);
 end;
 
 function TPasParser.ParseProcedureType(Parent: TPasElement;
@@ -4453,10 +4460,11 @@ begin
     // Writeln(modcount, curtokentext);
     LastToken:=CurToken;
     NextToken;
-    if (ModCount in [1,2,3]) and (CurToken = tkEqual) then
+    if (ModCount<=3) and (CurToken = tkEqual) and not (Parent is TPasProcedure) then
       begin
       // for example: const p: procedure = nil;
       UngetToken;
+      Engine.FinishScope(stProcedureHeader,Element);
       exit;
       end;
     If CurToken=tkSemicolon then
@@ -4482,8 +4490,8 @@ begin
           end;
       end;
       ExpectTokens([tkSemicolon,tkEqual]);
-      if curtoken=tkEqual then
-        ungettoken;
+      if CurToken=tkEqual then
+        UngetToken;
       end
     else if IsProc and TokenIsProcedureModifier(Parent,CurTokenString,PM) then
       HandleProcedureModifier(Parent,PM)
@@ -4513,10 +4521,20 @@ begin
       end
     else if (CurToken = tkSquaredBraceOpen) then
       begin
-      repeat
-        NextToken
-      until CurToken = tkSquaredBraceClose;
-      ExpectToken(tkSemicolon);
+      if ([msPrefixedAttributes,msIgnoreAttributes]*CurrentModeswitches<>[]) then
+        begin
+        // [attribute]
+        UngetToken;
+        break;
+        end
+      else
+        begin
+        // ToDo: read FPC's [] modifiers, e.g. [public,alias:'']
+        repeat
+          NextToken
+        until CurToken = tkSquaredBraceClose;
+        ExpectToken(tkSemicolon);
+        end;
       end
     else
       CheckToken(tkSemicolon);
@@ -5976,7 +5994,7 @@ begin
         HaveClass:=False;
         end;
       tkSquaredBraceOpen:
-        if msIgnoreAttributes in CurrentModeswitches then
+        if [msPrefixedAttributes,msIgnoreAttributes]*CurrentModeswitches<>[] then
           ParseAttribute(AType)
         else
           CheckToken(tkIdentifier);

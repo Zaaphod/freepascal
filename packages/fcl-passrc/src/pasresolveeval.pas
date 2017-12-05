@@ -144,6 +144,10 @@ const
   nIncompatibleTypesGotParametersExpected = 3071;
   nAddingIndexSpecifierRequiresNewX = 3072;
   nCantFindUnitX = 3073;
+  nCannotFindEnumeratorForType = 3074;
+  nPreviousDeclMissesOverload = 3075;
+  nOverloadedProcMissesOverload = 3076;
+  nMethodHidesMethodOfBaseType = 3077;
 
 // resourcestring patterns of messages
 resourcestring
@@ -167,7 +171,7 @@ resourcestring
   sCallingConventionMismatch = 'Calling convention mismatch';
   sResultTypeMismatchExpectedButFound = 'Result type mismatch, expected %s, but found %s';
   sFunctionHeaderMismatchForwardVarName = 'function header "%s" doesn''t match forward : var name changes %s => %s';
-  sFunctionHidesIdentifier = 'function hides identifier "%s" at "%s"';
+  sFunctionHidesIdentifier = 'function hides identifier at "%s"';
   sNoMethodInAncestorToOverride = 'There is no method in an ancestor class to be overridden "%s"';
   sInheritedOnlyWorksInMethods = 'Inherited works only in methods';
   sInheritedNeedsAncestor = 'inherited needs an ancestor';
@@ -220,6 +224,10 @@ resourcestring
   sIncompatibleTypesGotParametersExpected = 'Incompatible types, got %s parameters, expected %s';
   sAddingIndexSpecifierRequiresNewX = 'adding index specifier requires new "%s" specifier';
   sCantFindUnitX = 'can''t find unit "%s"';
+  sCannotFindEnumeratorForType = 'Cannot find an enumerator for the type "%s"';
+  sPreviousDeclMissesOverload = 'Previous declaration of "%s" at %s was not marked with "overload" directive';
+  sOverloadedProcMissesOverload = 'Overloaded procedure misses "overload" directive. Previous declaration is at %s';
+  sMethodHidesMethodOfBaseType = 'Method "%s" hides method of base type "%s" at %s';
 
 type
   { TResolveData - base class for data stored in TPasElement.CustomData }
@@ -564,7 +572,7 @@ type
     procedure EmitRangeCheckConst(id: int64; const aValue: String;
       MinVal, MaxVal: MaxPrecInt; PosEl: TPasElement; MsgType: TMessageType = mtWarning);
     function ChrValue(Value: TResEvalValue; ErrorEl: TPasElement): TResEvalValue; virtual;
-    function OrdValue(Value: TResEvalValue; ErrorEl: TPasElement): TResEvalInt; virtual;
+    function OrdValue(Value: TResEvalValue; ErrorEl: TPasElement): TResEvalValue; virtual;
     procedure PredValue(Value: TResEvalValue; ErrorEl: TPasElement); virtual;
     procedure SuccValue(Value: TResEvalValue; ErrorEl: TPasElement); virtual;
     function EvalStrFunc(Params: TParamsExpr; Flags: TResEvalFlags): TResEvalValue; virtual;
@@ -3292,7 +3300,7 @@ begin
   Result:=nil;
   S:=Expr.Value;
   {$IFDEF VerbosePasResEval}
-  writeln('TResExprEvaluator.EvalPrimitiveExprString (',S,')');
+  //writeln('TResExprEvaluator.EvalPrimitiveExprString (',S,')');
   {$ENDIF}
   if S='' then
     RaiseInternalError(20170523113809);
@@ -3393,7 +3401,7 @@ begin
     end;
   until false;
   {$IFDEF VerbosePasResEval}
-  writeln('TResExprEvaluator.EvalPrimitiveExprString Result=',Result.AsString);
+  //writeln('TResExprEvaluator.EvalPrimitiveExprString Result=',Result.AsString);
   {$ENDIF}
 end;
 
@@ -3545,7 +3553,7 @@ var
 begin
   Result:=false;
   {$IFDEF VerbosePasResEval}
-  //writeln('TResExprEvaluator.IsInRange ExprValue=',dbgs(Value),' RangeValue=',dbgs(RangeValue));
+  //writeln('TResExprEvaluator.IsInRange Value=',dbgs(Value),' RangeValue=',dbgs(RangeValue));
   {$ENDIF}
   case RangeValue.Kind of
   revkRangeInt:
@@ -3675,8 +3683,16 @@ begin
         exit(true);
       end
     else
+      begin
+      {$IFDEF VerbosePasResEval}
+      writeln('TResExprEvaluator.IsInRange Value=',dbgs(Value),' RangeValue=',dbgs(RangeValue));
+      {$ENDIF}
       RaiseNotYetImplemented(20170522171551,ValueExpr);
+      end;
   else
+    {$IFDEF VerbosePasResEval}
+    writeln('TResExprEvaluator.IsInRange Value=',dbgs(Value),' RangeValue=',dbgs(RangeValue));
+    {$ENDIF}
     RaiseNotYetImplemented(20170522171307,RangeExpr);
   end;
 end;
@@ -3819,7 +3835,7 @@ begin
 end;
 
 function TResExprEvaluator.OrdValue(Value: TResEvalValue; ErrorEl: TPasElement
-  ): TResEvalInt;
+  ): TResEvalValue;
 begin
   case Value.Kind of
     revkBool:
@@ -3827,6 +3843,8 @@ begin
         Result:=TResEvalInt.CreateValue(1)
       else
         Result:=TResEvalInt.CreateValue(0);
+    revkInt,revkUInt:
+      Result:=Value;
     revkString:
       if length(TResEvalString(Value).S)<>1 then
         RaiseRangeCheck(20170624160128,ErrorEl)

@@ -198,6 +198,7 @@ type
     procedure UseExpr(El: TPasExpr); virtual;
     procedure UseExprRef(Expr: TPasExpr; Access: TResolvedRefAccess;
       UseFull: boolean); virtual;
+    procedure UseInheritedExpr(El: TInheritedExpr); virtual;
     procedure UseProcedure(Proc: TPasProcedure); virtual;
     procedure UseProcedureType(ProcType: TPasProcedureType; Mark: boolean); virtual;
     procedure UseType(El: TPasType; Mode: TPAUseMode); virtual;
@@ -982,7 +983,7 @@ var
   Decl: TPasElement;
 begin
   if El=nil then exit;
-  // expressions are not marked
+  // Note: expression itself is not marked, but it can reference identifiers
 
   Ref:=nil;
   if El.CustomData is TResolvedReference then
@@ -1043,7 +1044,6 @@ begin
   if (C=TPrimitiveExpr)
       or (C=TSelfExpr)
       or (C=TBoolConstExpr)
-      or (C=TInheritedExpr)
       or (C=TNilExpr) then
   else if C=TBinaryExpr then
     begin
@@ -1065,6 +1065,8 @@ begin
     for i:=0 to length(Params)-1 do
       UseExpr(Params[i]);
     end
+  else if C=TInheritedExpr then
+    UseInheritedExpr(TInheritedExpr(El))
   else
     RaiseNotSupported(20170307085444,El);
 end;
@@ -1125,6 +1127,42 @@ begin
     writeln('TPasResolver.UseExprRef Expr=',GetObjName(Expr),' Access=',Access,' Declaration="',Expr.GetDeclaration(false),'"');
     {$ENDIF}
     RaiseNotSupported(20170306102158,Expr);
+    end;
+end;
+
+procedure TPasAnalyzer.UseInheritedExpr(El: TInheritedExpr);
+var
+  P: TPasElement;
+  ProcScope: TPasProcedureScope;
+  Proc: TPasProcedure;
+  Args: TFPList;
+  i: Integer;
+  Arg: TPasArgument;
+begin
+  if (El.Parent.ClassType=TBinaryExpr)
+  and (TBinaryExpr(El.Parent).OpCode=eopNone) then
+    // 'inherited Proc...;'
+    exit;
+  // 'inherited;'
+  P:=El.Parent;
+  while not P.InheritsFrom(TPasProcedure) do
+    P:=P.Parent;
+  ProcScope:=TPasProcedure(P).CustomData as TPasProcedureScope;
+  if ProcScope.DeclarationProc<>nil then
+    Proc:=ProcScope.DeclarationProc
+  else
+    Proc:=TPasProcedure(P);
+  Args:=Proc.ProcType.Args;
+  for i:=0 to Args.Count-1 do
+    begin
+    Arg:=TPasArgument(Args[i]);
+    case Arg.Access of
+    argDefault,argConst,argConstRef: UseArgument(Arg,rraRead);
+    argVar: UseArgument(Arg,rraVarParam);
+    argOut: UseArgument(Arg,rraOutParam);
+    else
+      RaiseNotSupported(20171107175406,Arg);
+    end;
     end;
 end;
 
@@ -1590,6 +1628,7 @@ var
   i: Integer;
   UsedModule, aModule: TPasModule;
   UsesClause: TPasUsesClause;
+  Use: TPasUsesUnit;
 begin
   {$IFDEF VerbosePasAnalyzer}
   writeln('TPasAnalyzer.EmitSectionHints ',GetElModName(Section));
@@ -1599,13 +1638,14 @@ begin
   UsesClause:=Section.UsesClause;
   for i:=0 to length(UsesClause)-1 do
     begin
-    if UsesClause[i].Module is TPasModule then
+    Use:=UsesClause[i];
+    if Use.Module is TPasModule then
       begin
-      UsedModule:=TPasModule(UsesClause[i].Module);
+      UsedModule:=TPasModule(Use.Module);
       if CompareText(UsedModule.Name,'system')=0 then continue;
       if FindNode(UsedModule)=nil then
         EmitMessage(20170311191725,mtHint,nPAUnitNotUsed,sPAUnitNotUsed,
-          [UsedModule.Name,aModule.Name],aModule);
+          [UsedModule.Name,aModule.Name],Use.Expr);
       end;
     end;
 
@@ -1777,7 +1817,7 @@ begin
       else
         begin
         // parameter was used
-        if (Usage.Access=paiaWrite) and (Arg.Access<>argOut) then
+        if (Usage.Access=paiaWrite) and not (Arg.Access in [argOut,argVar]) then
           EmitMessage(20170312095348,mtHint,nPAValueParameterIsAssignedButNeverUsed,
             sPAValueParameterIsAssignedButNeverUsed,[Arg.Name],Arg);
         end;
@@ -1959,7 +1999,8 @@ begin
   Result:=C.InheritsFrom(TPasType)
       or C.InheritsFrom(TPasVariable)
       or C.InheritsFrom(TPasProcedure)
-      or C.InheritsFrom(TPasModule);
+      or C.InheritsFrom(TPasModule)
+      or (C=TPasResString);
 end;
 
 function TPasAnalyzer.IsImplBlockEmpty(El: TPasImplBlock): boolean;

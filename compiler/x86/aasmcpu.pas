@@ -1426,10 +1426,12 @@ implementation
                       ) then
                       message(asmr_e_invalid_opcode_and_operand);
                     if
-{$ifndef i8086}
+{$ifdef i8086}
+                       (longint(val)>=-128) and (val<=127) then
+{$else i8086}
                        (opsize<>S_W) and
-{$endif not i8086}
                        (aint(val)>=-128) and (val<=127) then
+{$endif not i8086}
                       ot:=OT_IMM8 or OT_SIGNED
                     else
                       ot:=OT_IMMEDIATE or opsize_2_type[i,opsize];
@@ -1872,13 +1874,30 @@ implementation
     procedure optimize_ref(var ref:treference; inlineasm: boolean);
       var
         ss_equals_ds: boolean;
+        tmpreg: TRegister;
       begin
+{$ifdef x86_64}
+        { x86_64 in long mode ignores all segment base, limit and access rights
+          checks for the DS, ES and SS registers, so we can set ss_equals_ds to
+          true (and thus, perform stronger optimizations on the reference),
+          regardless of whether this is inline asm or not (so, even if the user
+          is doing tricks by loading different values into DS and SS, it still
+          doesn't matter while the processor is in long mode) }
+        ss_equals_ds:=True;
+{$else x86_64}
+        { for i8086 and i386 inline asm, we assume SS<>DS, even if we're
+          compiling for a memory model, where SS=DS, because the user might be
+          doing something tricky with the segment registers (and may have
+          temporarily set them differently) }
         if inlineasm then
           ss_equals_ds:=False
         else
           ss_equals_ds:=segment_regs_equal(NR_DS,NR_SS);
+{$endif x86_64}
         { remove redundant segment overrides }
-        if (ref.segment<>NR_NO) and (ref.segment=get_default_segment_of_ref(ref)) then
+        if (ref.segment<>NR_NO) and
+           ((inlineasm and (ref.segment=get_default_segment_of_ref(ref))) or
+            ((not inlineasm) and (segment_regs_equal(ref.segment,get_default_segment_of_ref(ref))))) then
           ref.segment:=NR_NO;
         if not is_16_bit_ref(ref) then
           begin
@@ -1896,17 +1915,23 @@ implementation
                     ref.scalefactor:=0;
                   end;
               end;
-            { Switching EBP+reg to reg+EBP sometimes gives shorter instructions (if there's no offset) }
-            if (ref.base=NR_EBP) and (ref.index<>NR_NO) and (ref.index<>NR_EBP) and
+            { Switching rBP+reg to reg+rBP sometimes gives shorter instructions (if there's no offset)
+              On x86_64 this also works for switching r13+reg to reg+r13. }
+            if ((ref.base=NR_EBP) {$ifdef x86_64}or (ref.base=NR_RBP) or (ref.base=NR_R13) or (ref.base=NR_R13D){$endif}) and
+               (ref.index<>NR_NO) and
+               (ref.index<>NR_EBP) and {$ifdef x86_64}(ref.index<>NR_RBP) and (ref.index<>NR_R13) and (ref.index<>NR_R13D) and{$endif}
                (ref.scalefactor<=1) and (ref.offset=0) and (ref.refaddr=addr_no) and
                (ss_equals_ds or (ref.segment<>NR_NO)) then
               begin
+                tmpreg:=ref.base;
                 ref.base:=ref.index;
-                ref.index:=NR_EBP;
+                ref.index:=tmpreg;
               end;
           end;
         { remove redundant segment overrides again }
-        if (ref.segment<>NR_NO) and (ref.segment=get_default_segment_of_ref(ref)) then
+        if (ref.segment<>NR_NO) and
+           ((inlineasm and (ref.segment=get_default_segment_of_ref(ref))) or
+            ((not inlineasm) and (segment_regs_equal(ref.segment,get_default_segment_of_ref(ref))))) then
           ref.segment:=NR_NO;
       end;
 
@@ -2839,7 +2864,11 @@ implementation
       }
 
       var
+{$ifdef i8086}
+        currval : longint;
+{$else i8086}
         currval : aint;
+{$endif i8086}
         currsym : tobjsymbol;
         currrelreloc,
         currabsreloc,
@@ -2909,7 +2938,11 @@ implementation
                 end;
               top_const :
                 begin
+{$ifdef i8086}
+                  currval:=longint(oper[opidx]^.val);
+{$else i8086}
                   currval:=aint(oper[opidx]^.val);
+{$endif i8086}
                   currsym:=nil;
                   currabsreloc:=RELOC_ABSOLUTE;
                   currabsreloc32:=RELOC_ABSOLUTE32;
@@ -3322,7 +3355,11 @@ implementation
             &40,&41,&42 :    // 040..042
               begin
                 getvalsym(c-&40);
-                if assigned(currsym) then
+                if assigned(currsym)
+{$ifdef i8086}
+                   or (currabsreloc in [RELOC_DGROUP,RELOC_FARDATASEG])
+{$endif i8086}
+                then
                  objdata_writereloc(currval,4,currsym,currabsreloc32)
                 else
                  objdata.writebytes(currval,4);

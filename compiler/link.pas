@@ -160,7 +160,7 @@ Implementation
 {$ifdef hasUnix}
       baseunix,
 {$endif hasUnix}
-      script,globals,verbose,comphook,ppu,fpccrc,
+      cscript,globals,verbose,comphook,ppu,fpccrc,
       aasmbase,aasmcpu,
       ogmap;
 
@@ -180,13 +180,13 @@ Implementation
       begin
         result:=0;
         bufsize:=64*1024;
-	      fs:=CFileStreamClass.Create(fn,fmOpenRead or fmShareDenyNone);
-	      if CStreamError<>0 then
-	        begin
-	          fs.Free;
-	          Comment(V_Error,'Can''t open file: '+fn);
-	          exit;
-	        end;
+        fs:=CFileStreamClass.Create(fn,fmOpenRead or fmShareDenyNone);
+        if CStreamError<>0 then
+          begin
+            fs.Free;
+            Comment(V_Error,'Can''t open file: '+fn);
+            exit;
+          end;
         getmem(buf,bufsize);
         repeat
           bufcount:=fs.Read(buf^,bufsize);

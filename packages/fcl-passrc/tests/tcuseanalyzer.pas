@@ -60,6 +60,7 @@ type
     procedure TestM_RangeType;
     procedure TestM_Unary;
     procedure TestM_Const;
+    procedure TestM_ResourceString;
     procedure TestM_Record;
     procedure TestM_Array;
     procedure TestM_NestedFuncResult;
@@ -79,8 +80,12 @@ type
     procedure TestM_Hint_UnitNotUsed;
     procedure TestM_Hint_UnitNotUsed_No_OnlyExternal;
     procedure TestM_Hint_ParameterNotUsed;
+    procedure TestM_Hint_ParameterAssignedButNotReadVarParam;
     procedure TestM_Hint_ParameterNotUsed_Abstract;
     procedure TestM_Hint_ParameterNotUsedTypecast;
+    procedure TestM_Hint_OutParam_No_AssignedButNeverUsed;
+    procedure TestM_Hint_ArgPassed_No_ParameterNotUsed;
+    procedure TestM_Hint_InheritedWithoutParams;
     procedure TestM_Hint_LocalVariableNotUsed;
     procedure TestM_Hint_ForVar_No_LocalVariableNotUsed;
     procedure TestM_Hint_InterfaceUnitVariableUsed;
@@ -104,12 +109,11 @@ type
     procedure TestM_Hint_FunctionResultDoesNotSeemToBeSet_Abstract;
     procedure TestM_Hint_FunctionResultRecord;
     procedure TestM_Hint_FunctionResultPassRecordElement;
-    procedure TestM_Hint_OutParam_No_AssignedButNeverUsed;
-    procedure TestM_Hint_ArgPassed_No_ParameterNotUsed;
 
     // whole program optimization
     procedure TestWP_LocalVar;
     procedure TestWP_UnitUsed;
+    procedure TestWP_UnitUsed_ResourceString;
     procedure TestWP_UnitNotUsed;
     procedure TestWP_UnitInitialization;
     procedure TestWP_UnitFinalization;
@@ -545,21 +549,40 @@ end;
 procedure TTestUseAnalyzer.TestM_Const;
 begin
   StartProgram(false);
-  Add('resourcestring {#rs_used}rs = ''txt'';');
-  Add('procedure {#DoIt_used}DoIt;');
-  Add('var');
-  Add('  {#a_used}a: longint;');
-  Add('  {#b_used}b: boolean;');
-  Add('  {#c_used}c: array of longint;');
-  Add('  {#d_used}d: string;');
-  Add('begin');
-  Add('  a:=+1;');
-  Add('  b:=true;');
-  Add('  c:=nil;');
-  Add('  d:=''foo''+rs;');
-  Add('end;');
-  Add('begin');
-  Add('  DoIt;');
+  Add([
+  'procedure {#DoIt_used}DoIt;',
+  'var',
+  '  {#a_used}a: longint;',
+  '  {#b_used}b: boolean;',
+  '  {#c_used}c: array of longint;',
+  '  {#d_used}d: string;',
+  'begin',
+  '  a:=+1;',
+  '  b:=true;',
+  '  c:=nil;',
+  '  d:=''foo'';',
+  'end;',
+  'begin',
+  '  DoIt;']);
+  AnalyzeProgram;
+end;
+
+procedure TTestUseAnalyzer.TestM_ResourceString;
+begin
+  StartProgram(false);
+  Add([
+  'resourcestring',
+  'resourcestring',
+  '  {#a_used}a = ''txt'';',
+  '  {#b_used}b = ''foo'';',
+  'procedure {#DoIt_used}DoIt(s: string);',
+  'var',
+  '  {#d_used}d: string;',
+  'begin',
+  '  d:=b;',
+  'end;',
+  'begin',
+  '  DoIt(a);']);
   AnalyzeProgram;
 end;
 
@@ -945,6 +968,19 @@ begin
   CheckUseAnalyzerUnexpectedHints;
 end;
 
+procedure TTestUseAnalyzer.TestM_Hint_ParameterAssignedButNotReadVarParam;
+begin
+  StartProgram(true);
+  Add([
+  'procedure DoIt(var i: longint);',
+  'begin i:=3; end;',
+  'var v: longint;',
+  'begin',
+  '  DoIt(v);']);
+  AnalyzeProgram;
+  CheckUseAnalyzerUnexpectedHints;
+end;
+
 procedure TTestUseAnalyzer.TestM_Hint_ParameterNotUsed_Abstract;
 begin
   StartProgram(true);
@@ -975,6 +1011,64 @@ begin
   Add('end;');
   Add('begin');
   Add('  DoIt(nil);');
+  AnalyzeProgram;
+  CheckUseAnalyzerUnexpectedHints;
+end;
+
+procedure TTestUseAnalyzer.TestM_Hint_OutParam_No_AssignedButNeverUsed;
+begin
+  StartProgram(true);
+  Add('procedure DoIt(out x: longint);');
+  Add('begin');
+  Add('  x:=3;');
+  Add('end;');
+  Add('var i: longint;');
+  Add('begin');
+  Add('  DoIt(i);');
+  AnalyzeProgram;
+  CheckUseAnalyzerUnexpectedHints;
+end;
+
+procedure TTestUseAnalyzer.TestM_Hint_ArgPassed_No_ParameterNotUsed;
+begin
+  StartProgram(false);
+  Add([
+  'procedure AssertTrue(b: boolean);',
+  'begin',
+  '  if b then ;',
+  'end;',
+  'procedure AssertFalse(b: boolean);',
+  'begin',
+  '  AssertTrue(not b);',
+  'end;',
+  'begin',
+  '  AssertFalse(true);',
+  '']);
+  AnalyzeProgram;
+  CheckUseAnalyzerUnexpectedHints;
+end;
+
+procedure TTestUseAnalyzer.TestM_Hint_InheritedWithoutParams;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TObject = class',
+  '    constructor Create(i: longint); virtual;',
+  '  end;',
+  '  TBird = class',
+  '    constructor Create(i: longint); override;',
+  '  end;',
+  'constructor TObject.Create(i: longint);',
+  'begin',
+  '  if i=0 then ;',
+  'end;',
+  'constructor TBird.Create(i: longint);',
+  'begin',
+  '  inherited;',
+  'end;',
+  'begin',
+  '  TBird.Create(3);']);
   AnalyzeProgram;
   CheckUseAnalyzerUnexpectedHints;
 end;
@@ -1455,39 +1549,6 @@ begin
   CheckUseAnalyzerUnexpectedHints;
 end;
 
-procedure TTestUseAnalyzer.TestM_Hint_OutParam_No_AssignedButNeverUsed;
-begin
-  StartProgram(true);
-  Add('procedure DoIt(out x: longint);');
-  Add('begin');
-  Add('  x:=3;');
-  Add('end;');
-  Add('var i: longint;');
-  Add('begin');
-  Add('  DoIt(i);');
-  AnalyzeProgram;
-  CheckUseAnalyzerUnexpectedHints;
-end;
-
-procedure TTestUseAnalyzer.TestM_Hint_ArgPassed_No_ParameterNotUsed;
-begin
-  StartProgram(false);
-  Add([
-  'procedure AssertTrue(b: boolean);',
-  'begin',
-  '  if b then ;',
-  'end;',
-  'procedure AssertFalse(b: boolean);',
-  'begin',
-  '  AssertTrue(not b);',
-  'end;',
-  'begin',
-  '  AssertFalse(true);',
-  '']);
-  AnalyzeProgram;
-  CheckUseAnalyzerUnexpectedHints;
-end;
-
 procedure TTestUseAnalyzer.TestWP_LocalVar;
 begin
   StartProgram(false);
@@ -1519,6 +1580,25 @@ begin
   CheckUnitUsed('unit2.pp',true);
 end;
 
+procedure TTestUseAnalyzer.TestWP_UnitUsed_ResourceString;
+begin
+  AddModuleWithIntfImplSrc('unit2.pp',
+    LinesToStr([
+    'resourcestring rs = ''txt'';',
+    'procedure DoIt;',
+    '']),
+    LinesToStr([
+    'procedure DoIt; begin end;']));
+
+  StartProgram(true);
+  Add('uses unit2;');
+  Add('begin');
+  Add('  if rs='''' then ;');
+  AnalyzeWholeProgram;
+
+  CheckUnitUsed('unit2.pp',true);
+end;
+
 procedure TTestUseAnalyzer.TestWP_UnitNotUsed;
 begin
   AddModuleWithIntfImplSrc('unit2.pp',
@@ -1530,7 +1610,8 @@ begin
     'procedure DoIt; begin end;']));
 
   StartProgram(true);
-  Add('uses unit2;');
+  Add('uses');
+  Add('  unit2;');
   Add('begin');
   AnalyzeWholeProgram;
 
