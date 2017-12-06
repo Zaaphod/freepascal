@@ -123,12 +123,12 @@ procedure SetUseACP(ACP:Boolean);
 begin
     UseACP:=ACP;
     if UseACP then
-      if not(SafeCPSwitching) then
-        SetConsoleOutputCP(GetACP)   // Set console CP only once here if SafeCPSwitching is False and
-                                     // if UseACP is True
-      else
-       SetConsoleOutputCP(OriginalConsoleOutputCP)    // Set console back to original if UseACP is False
+      Begin
+        if not(SafeCPSwitching) then
+          SetConsoleOutputCP(GetACP);   // Set console CP only once here if SafeCPSwitching is False and
+      End                               // if UseACP is True
     else
+      SetConsoleOutputCP(OriginalConsoleOutputCP);    // Set console back to original if UseACP is False
 end;
 
 procedure TextMode (Mode: word);
@@ -820,8 +820,11 @@ begin
     WriteStr(s);
   SetScreenCursor(CurrX, CurrY);
 
-  if SafeCPSwitching and UseACP then     //restore codepage on every write if set previously
-    SetConsoleOutputCP(OldConsoleOutputCP);
+  if SafeCPSwitching then
+    if UseACP then     //restore codepage on every write
+      SetConsoleOutputCP(OldConsoleOutputCP)
+    else
+      SetConsoleOutputCP(OriginalConsoleOutputCP);
 
   f.bufpos:=0;
 end;
@@ -926,9 +929,11 @@ begin
       end;
   until false;
 
-  if SafeCPSwitching and UseACP then    //Restore codepage on every Read if set previously
-    SetConsoleOutputCP(OldConsoleOutputCP);
-	
+  if SafeCPSwitching then
+    if UseACP then     //restore codepage on every read
+      SetConsoleOutputCP(OldConsoleOutputCP)
+    else
+      SetConsoleOutputCP(OriginalConsoleOutputCP);
   f.bufpos:=0;
   SetScreenCursor(CurrX, CurrY);
 End;
