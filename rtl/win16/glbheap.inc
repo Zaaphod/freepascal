@@ -25,10 +25,12 @@ such heap block starts with a header of type TGlobalHeapBlockHeader, which is
 always located at offset 0 of the heap block segment. These heap blocks form a
 circular linked list.
 }
+    const
+      GlobalHeapBlockID=20564;
     type
       PGlobalHeapBlockHeader=^TGlobalHeapBlockHeader;far;
       TGlobalHeapBlockHeader=record
-        ID: LongWord;  { 20564 }
+        ID: LongWord;  { =GlobalHeapBlockID }
         FirstFreeOfs: Word;
         Unknown: Word;  { don't know what this is; seems to be 0 }
         TotalFreeSpaceInBlock: Word;
@@ -59,7 +61,7 @@ circular linked list.
           HandleError(204);
         with pb^ do
           begin
-            ID:=20564;
+            ID:=GlobalHeapBlockID;
             FirstFreeOfs:=SizeOf(TGlobalHeapBlockHeader);
             Unknown:=0;
             TotalFreeSpaceInBlock:=HeapBlock-SizeOf(TGlobalHeapBlockHeader);
@@ -123,7 +125,11 @@ circular linked list.
                             CurBlockP^.FirstFreeOfs:=Ofs(CurSubBlock^)+ASize;
                         end;
                       Dec(CurBlockP^.TotalFreeSpaceInBlock,ASize);
-                      { TODO: what is FirstFreeOfs if the entire block is allocated??? }
+                      { if TotalFreeSpaceInBlock becomes 0, then FirstFreeOfs
+                      should also become 0, but that is already handled
+                      correctly in the code above (in this case, by the
+                      line 'CurBlockP^.FirstFreeOfs:=CurSubBlock^.Next',
+                      so there's no need to set it explicitly here. }
                       exit;
                     end;
                   PrevSubBlock:=CurSubBlock;
@@ -189,9 +195,10 @@ circular linked list.
       begin
         ASize:=(ASize+3) and $fffc;
         CurBlock:=Seg(Addr^);
-        if Ofs(Addr^)<SizeOf(TGlobalHeapBlockHeader) then
-          HandleError(204);
         CurBlockP:=Ptr(CurBlock,0);
+        if (Ofs(Addr^)<SizeOf(TGlobalHeapBlockHeader)) or ((Ofs(Addr^) and 3)<>0) or
+           (CurBlockP^.ID<>GlobalHeapBlockID) then
+          HandleError(204);
         if CurBlockP^.TotalFreeSpaceInBlock=0 then
           begin
             CurBlockP^.FirstFreeOfs:=Ofs(Addr^);
@@ -381,6 +388,57 @@ circular linked list.
               SysGlobalFreeMem(p);
             end;
         p := result;
+      end;
+
+    function MemAvail: LongInt;
+      var
+        CurBlock: Word;
+        CurBlockP: PGlobalHeapBlockHeader;
+        CurSubBlock: PFreeSubBlock;
+      begin
+        result:=GetFreeSpace(0);
+        CurBlock:=HeapList;
+        if CurBlock=0 then
+          exit;
+        repeat
+          CurBlockP:=Ptr(CurBlock,0);
+          CurSubBlock:=Ptr(CurBlock,CurBlockP^.FirstFreeOfs);
+          while Ofs(CurSubBlock^)<>0 do
+            begin
+              if CurSubBlock^.Size>2 then
+                Inc(result,CurSubBlock^.Size-2);
+              CurSubBlock:=Ptr(CurBlock,CurSubBlock^.Next);
+            end;
+          CurBlock:=CurBlockP^.NextBlockSeg;
+        until CurBlock=HeapList;
+      end;
+
+    function MaxAvail: LongInt;
+      var
+        CurBlock: Word;
+        CurBlockP: PGlobalHeapBlockHeader;
+        CurSubBlock: PFreeSubBlock;
+      begin
+        result:=GlobalCompact(0);
+        if result>(65536-SizeOf(TGlobalHeapBlockHeader)-2) then
+          exit;
+        CurBlock:=HeapList;
+        if CurBlock=0 then
+          exit;
+        repeat
+          CurBlockP:=Ptr(CurBlock,0);
+          if CurBlockP^.TotalFreeSpaceInBlock>(result+2) then
+            begin
+              CurSubBlock:=Ptr(CurBlock,CurBlockP^.FirstFreeOfs);
+              while Ofs(CurSubBlock^)<>0 do
+                begin
+                  if CurSubBlock^.Size>(result+2) then
+                    result:=CurSubBlock^.Size-2;
+                  CurSubBlock:=Ptr(CurBlock,CurSubBlock^.Next);
+                end;
+            end;
+          CurBlock:=CurBlockP^.NextBlockSeg;
+        until CurBlock=HeapList;
       end;
 
     const

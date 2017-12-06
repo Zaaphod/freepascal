@@ -311,7 +311,6 @@ end;
 function TVersionResource.ReadWideString(toread: integer): string;
 var w : word;
     ws : widestring;
-    i: integer = 0;
 begin
   ws:='';
   if toread=0 then
@@ -319,13 +318,12 @@ begin
   w:=0;
   repeat
     RawData.ReadBuffer(w,2);
-    if (toread=-1) and (w = 0) then break;
+    if (w = 0) then break;
     {$IFDEF ENDIAN_BIG}
     w:=SwapEndian(w);
     {$ENDIF}
     ws:=ws+widechar(w);
-    inc(i);
-  until i = toread;
+  until false;
   Result:=ws;
 end;
 
