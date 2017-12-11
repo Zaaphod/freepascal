@@ -821,11 +821,8 @@ begin
     WriteStr(s);
   SetScreenCursor(CurrX, CurrY);
 
-  if SafeCPSwitching then
-    if UseACP then     //restore codepage on every write
-      SetConsoleOutputCP(OldConsoleOutputCP)
-    else
-      SetConsoleOutputCP(OriginalConsoleOutputCP);
+  if SafeCPSwitching and UseACP then     //restore codepage on every write if set previously
+    SetConsoleOutputCP(OldConsoleOutputCP);
 
   f.bufpos:=0;
 end;
@@ -930,11 +927,9 @@ begin
       end;
   until false;
 
-  if SafeCPSwitching then
-    if UseACP then     //restore codepage on every read
-      SetConsoleOutputCP(OldConsoleOutputCP)
-    else
-      SetConsoleOutputCP(OriginalConsoleOutputCP);
+  if SafeCPSwitching and UseACP then    //Restore codepage on every Read if set previously
+    SetConsoleOutputCP(OldConsoleOutputCP);
+	
   f.bufpos:=0;
   SetScreenCursor(CurrX, CurrY);
 End;
